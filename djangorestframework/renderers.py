@@ -7,10 +7,11 @@ and providing forms and links depending on the allowed methods, renderers and pa
 """
 from django import forms
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.core.serializers.json import DateTimeAwareJSONEncoder
 from django.template import RequestContext, loader
 from django.utils import simplejson as json
-
+from django.utils.importlib import import_module
 
 from djangorestframework.compat import yaml
 from djangorestframework.utils import dict2xml, url_resolves
@@ -20,6 +21,7 @@ from djangorestframework import VERSION
 
 import string
 from urllib import quote_plus
+from UserList import UserList
 
 __all__ = (
     'BaseRenderer',
@@ -394,16 +396,44 @@ class DocumentingPlainTextRenderer(DocumentingTemplateRenderer):
     template = 'djangorestframework/api.txt'
 
 
-DEFAULT_RENDERERS = (
-    JSONRenderer,
-    JSONPRenderer,
-    DocumentingHTMLRenderer,
-    DocumentingXHTMLRenderer,
-    DocumentingPlainTextRenderer,
-    XMLRenderer
-)
+class DefaultRenderers(UserList):
+    _cached_data = None
 
-if yaml:
-    DEFAULT_RENDERERS += (YAMLRenderer, )
-else:
-    YAMLRenderer = None
+    DEFAULT_VALUE = (
+        JSONRenderer,
+        JSONPRenderer,
+        DocumentingHTMLRenderer,
+        DocumentingXHTMLRenderer,
+        DocumentingPlainTextRenderer,
+        XMLRenderer
+    )
+
+    if yaml:
+        DEFAULT_VALUE += (YAMLRenderer, )
+
+    @property
+    def data(self):
+        if self._cached_data is None:
+            l = []
+            for val in getattr(settings, 'DEFAULT_REST_FRAMEWORK_RENDERERS', self.DEFAULT_VALUE):
+                if issubclass(val, BaseRenderer):
+                    l.append(val)
+                elif isinstance(val, basestring):
+                    try:
+                        module, class_name = val.rsplit('.', 1)
+                        mod = import_module(module)
+                        renderer = getattr(mod, class_name)
+                        l.append(renderer)
+                    except Exception, e:
+                        raise ImproperlyConfigured("Unable to import renderer %s: %s" % (e, val))
+                else:
+                    raise ImproperlyConfigured("%s isn't a renderer." % val)
+            self._cached_data = l
+
+        return self._cached_data
+
+    @data.setter
+    def data(self, value):
+        pass  # no-op
+
+DEFAULT_RENDERERS = DefaultRenderers()
